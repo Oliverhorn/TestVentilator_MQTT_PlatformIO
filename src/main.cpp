@@ -25,8 +25,6 @@ unsigned long previousmills;
 const char *host = "Test1Ventilator";
 const char *ssid = STASSID;
 const char *password = STAPSK;
-const char *test = test;
-
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
