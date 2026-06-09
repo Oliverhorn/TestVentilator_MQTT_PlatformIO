@@ -1,10 +1,10 @@
 # Vornado ESP Firmware Revision History
 
-This project uses `major.minor` firmware versioning. Versions below `1.0` are development snapshots. Version `1.0` is the first currently recommended release.
+This project uses `major.minor` firmware versioning. Versions below `1.0` are development snapshots. Version `1.0` is the first stable release.
 
 Current recommended firmware:
 
-`firmware/v1.0-vornado-calibration-99-points.bin`
+`firmware/v1.1-vornado-firmware-version-topic.bin`
 
 ## Versions
 
@@ -25,11 +25,13 @@ Current recommended firmware:
 | 0.13 | `firmware/v0.13-vornado-target-1-99.bin` | Development | Corrected desired speed range to Vornado's 1-99 scale; removed hidden speed 0 power-off behavior. | `43ab2c67e3bab7c7170752e09a492883bafbc83f39b54d875f4708cea24f10a1` |
 | 0.14 | `firmware/v0.14-vornado-native-symphony-ir-regression.bin` | Regression / Do not use | Tested native `sendSymphony()` encoder. Manual Plus/Minus did not work with the installed hardware. | `7eced1b51b0918d3c794679f257d44752ebd450d9e24612da1eacc535e908d71` |
 | 0.15 | `firmware/v0.15-vornado-raw-ir-recovery.bin` | Recovery | Restored functional raw IR telegram sending with raw frequency `0`; manual Plus works again. | `9514ffda8fab25aafaa343dde9c1bb5f315427004705aab442a7cd6b14230469` |
-| 1.0 | `firmware/v1.0-vornado-calibration-99-points.bin` | Recommended | Uses raw IR, desired speed 1-99, and calibrates all 99 Vornado speed points instead of stopping on RPM plateaus. | `a11fb26a18a5cd9662bcb120a314c78d270a6ef01661c918d046bbdbf3c0bb0c` |
+| 1.0 | `firmware/v1.0-vornado-calibration-99-points.bin` | Stable | Uses raw IR, desired speed 1-99, and calibrates all 99 Vornado speed points instead of stopping on RPM plateaus. | `a11fb26a18a5cd9662bcb120a314c78d270a6ef01661c918d046bbdbf3c0bb0c` |
+| 1.1 | `firmware/v1.1-vornado-firmware-version-topic.bin` | Recommended | Publishes the retained firmware version on `Vornado/<device>/firmware/version` and exposes it as a Home Assistant MQTT sensor. | `710d479f9cb6487ede2e66eb9455b7731865e7a087a7c72eef45059674d9670b` |
 
 ## Operational Notes
 
-- Flash `v1.0` for the current working firmware.
-- After flashing `v1.0`, run calibration once. Calibration now takes about 10 minutes because all 99 Vornado speed positions are sampled.
+- Flash `v1.1` for the current working firmware.
+- After flashing `v1.1`, run calibration once if no valid calibration data is stored. Calibration takes about 10 minutes because all 99 Vornado speed positions are sampled.
 - Do not use `v0.14` unless specifically testing the native Symphony encoder regression.
 - Speed target values are `1-99`. Use the Power button/entity to switch the fan off.
+- The firmware version is published retained on `Vornado/<device>/firmware/version`.

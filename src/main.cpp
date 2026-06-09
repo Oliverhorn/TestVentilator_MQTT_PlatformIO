@@ -43,7 +43,7 @@ bool inferredPowerOn = false;
 #include <IRsend.h>
 
 const char *default_device_name = "Test1Ventilator";
-const char *firmware_version = "1.0";
+const char *firmware_version = "1.1";
 const char *ssid = STASSID;
 const char *password = STAPSK;
 const char *web_user = "admin";
@@ -223,6 +223,7 @@ char mqttSpeedSetTopic[84];
 char mqttSpeedTargetStateTopic[90];
 char mqttPowerStateTopic[80];
 char mqttIpAddressTopic[80];
+char mqttFirmwareVersionTopic[96];
 char mqttCalibrationTopic[90];
 char mqttCalibrationStatusTopic[98];
 String lastCalibrationStatus = "idle";
@@ -577,6 +578,7 @@ void updateMqttTopics()
   snprintf(mqttSpeedTargetStateTopic, sizeof(mqttSpeedTargetStateTopic), "Vornado/%s/speed/target", mqttConfig.deviceName);
   snprintf(mqttPowerStateTopic, sizeof(mqttPowerStateTopic), "Vornado/%s/power", mqttConfig.deviceName);
   snprintf(mqttIpAddressTopic, sizeof(mqttIpAddressTopic), "Vornado/%s/ip", mqttConfig.deviceName);
+  snprintf(mqttFirmwareVersionTopic, sizeof(mqttFirmwareVersionTopic), "Vornado/%s/firmware/version", mqttConfig.deviceName);
   snprintf(mqttCalibrationTopic, sizeof(mqttCalibrationTopic), "Vornado/%s/calibration/set", mqttConfig.deviceName);
   snprintf(mqttCalibrationStatusTopic, sizeof(mqttCalibrationStatusTopic), "Vornado/%s/calibration/status", mqttConfig.deviceName);
 }
@@ -946,6 +948,24 @@ void publishIpAddressDiscovery()
   publishRetained(topic, config);
 }
 
+void publishFirmwareVersionDiscovery()
+{
+  String id = discoveryId();
+  String topic = F("homeassistant/sensor/");
+  topic += id;
+  topic += F("_firmware_version/config");
+
+  String config = F("{\"name\":\"Firmware Version\",\"unique_id\":\"");
+  config += id;
+  config += F("_firmware_version\",\"state_topic\":\"");
+  config += mqttFirmwareVersionTopic;
+  config += F("\",\"icon\":\"mdi:chip\",");
+  config += discoveryDeviceJson();
+  config += F("}");
+
+  publishRetained(topic, config);
+}
+
 void publishCalibrationButtonDiscovery()
 {
   String id = discoveryId();
@@ -1017,6 +1037,7 @@ void publishHomeAssistantDiscovery()
   publishSpeedPercentDiscovery();
   publishPowerStateDiscovery();
   publishIpAddressDiscovery();
+  publishFirmwareVersionDiscovery();
   publishCalibrationButtonDiscovery();
   publishCalibrationStatusDiscovery();
   publishSpeedSliderDiscovery();
@@ -1081,6 +1102,8 @@ void handleConfigPage()
   page += htmlEscape(String(mqttPowerStateTopic));
   page += F("<br>IP Address Topic: ");
   page += htmlEscape(String(mqttIpAddressTopic));
+  page += F("<br>Firmware Version Topic: ");
+  page += htmlEscape(String(mqttFirmwareVersionTopic));
   page += F("<br>Calibration Topic: ");
   page += htmlEscape(String(mqttCalibrationTopic));
   page += F("<br>Calibration Status Topic: ");
@@ -1336,6 +1359,7 @@ void reconnect()
       client.subscribe(mqttCalibrationTopic);
       publishHomeAssistantDiscovery();
       publishRetained(mqttIpAddressTopic, WiFi.localIP().toString());
+      publishRetained(mqttFirmwareVersionTopic, firmware_version);
       publishRetained(mqttCalibrationStatusTopic, lastCalibrationStatus);
       publishRetained(mqttSpeedTargetStateTopic, String(currentTargetStatePercent()));
     }
