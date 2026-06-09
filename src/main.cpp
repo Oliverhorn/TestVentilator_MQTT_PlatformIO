@@ -43,7 +43,7 @@ bool inferredPowerOn = false;
 #include <IRsend.h>
 
 const char *default_device_name = "Test1Ventilator";
-const char *firmware_version = "1.1";
+const char *firmware_version = "1.2";
 const char *ssid = STASSID;
 const char *password = STAPSK;
 const char *web_user = "admin";
@@ -222,6 +222,7 @@ char mqttSpeedPercentTopic[80];
 char mqttSpeedSetTopic[84];
 char mqttSpeedTargetStateTopic[90];
 char mqttPowerStateTopic[80];
+char mqttPowerSetTopic[84];
 char mqttIpAddressTopic[80];
 char mqttFirmwareVersionTopic[96];
 char mqttCalibrationTopic[90];
@@ -577,6 +578,7 @@ void updateMqttTopics()
   snprintf(mqttSpeedSetTopic, sizeof(mqttSpeedSetTopic), "Vornado/%s/speed/set", mqttConfig.deviceName);
   snprintf(mqttSpeedTargetStateTopic, sizeof(mqttSpeedTargetStateTopic), "Vornado/%s/speed/target", mqttConfig.deviceName);
   snprintf(mqttPowerStateTopic, sizeof(mqttPowerStateTopic), "Vornado/%s/power", mqttConfig.deviceName);
+  snprintf(mqttPowerSetTopic, sizeof(mqttPowerSetTopic), "Vornado/%s/power/set", mqttConfig.deviceName);
   snprintf(mqttIpAddressTopic, sizeof(mqttIpAddressTopic), "Vornado/%s/ip", mqttConfig.deviceName);
   snprintf(mqttFirmwareVersionTopic, sizeof(mqttFirmwareVersionTopic), "Vornado/%s/firmware/version", mqttConfig.deviceName);
   snprintf(mqttCalibrationTopic, sizeof(mqttCalibrationTopic), "Vornado/%s/calibration/set", mqttConfig.deviceName);
@@ -637,7 +639,9 @@ String discoveryDeviceJson()
   device += id;
   device += F("\"],\"name\":\"");
   device += mqttConfig.deviceName;
-  device += F("\",\"manufacturer\":\"Custom\",\"model\":\"Vornado IR MQTT\"}");
+  device += F("\",\"manufacturer\":\"Custom\",\"model\":\"Vornado IR MQTT\",\"sw_version\":\"");
+  device += firmware_version;
+  device += F("\"}");
   return device;
 }
 
@@ -673,6 +677,56 @@ void publishCalibrationStatus(const String &status)
   }
 }
 
+void cancelSpeedTarget()
+{
+  targetSpeedPercent = -1;
+  powerToggleAttempts = 0;
+  speedBurstRemaining = 0;
+  speedBurstDirection = 0;
+  powerOnGraceUntil = 0;
+  powerOffWaitUntil = 0;
+}
+
+void setSpeedTarget(int requestedSpeed)
+{
+  targetSpeedPercent = constrain(requestedSpeed, 1, 99);
+  powerToggleAttempts = 0;
+  speedBurstRemaining = 0;
+  speedBurstDirection = 0;
+  lastSpeedAdjustAttempt = 0;
+  powerOnGraceUntil = 0;
+  powerOffWaitUntil = 0;
+  Serial.print(" target speed is:");
+  Serial.print(targetSpeedPercent);
+  if (client.connected())
+  {
+    client.publish(mqttSpeedTargetStateTopic, String(targetSpeedPercent).c_str(), true);
+  }
+}
+
+void requestFanPower(bool powerOn)
+{
+  cancelSpeedTarget();
+  if (powerOn == inferredPowerOn)
+  {
+    if (client.connected())
+    {
+      client.publish(mqttPowerStateTopic, inferredPowerOn ? "ON" : "OFF", true);
+    }
+    return;
+  }
+
+  sendPowerCommand();
+  if (powerOn)
+  {
+    powerOnGraceUntil = millis() + powerOnGracePeriod;
+  }
+  else
+  {
+    powerOffWaitUntil = millis() + powerOffRetryPeriod;
+  }
+}
+
 void startCalibration()
 {
   if (calibrationState != CAL_IDLE)
@@ -681,10 +735,7 @@ void startCalibration()
     return;
   }
 
-  targetSpeedPercent = -1;
-  powerToggleAttempts = 0;
-  speedBurstRemaining = 0;
-  speedBurstDirection = 0;
+  cancelSpeedTarget();
   calibrationActionCount = 0;
   calibrationRetryCount = 0;
   calibrationStableCount = 0;
@@ -930,6 +981,30 @@ void publishPowerStateDiscovery()
   publishRetained(topic, config);
 }
 
+void publishFanDiscovery()
+{
+  String id = discoveryId();
+  String topic = F("homeassistant/fan/");
+  topic += id;
+  topic += F("/config");
+
+  String config = F("{\"name\":null,\"unique_id\":\"");
+  config += id;
+  config += F("_fan\",\"command_topic\":\"");
+  config += mqttPowerSetTopic;
+  config += F("\",\"state_topic\":\"");
+  config += mqttPowerStateTopic;
+  config += F("\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"percentage_command_topic\":\"");
+  config += mqttSpeedSetTopic;
+  config += F("\",\"percentage_state_topic\":\"");
+  config += mqttSpeedPercentTopic;
+  config += F("\",\"speed_range_min\":1,\"speed_range_max\":99,\"icon\":\"mdi:fan\",\"retain\":false,");
+  config += discoveryDeviceJson();
+  config += F("}");
+
+  publishRetained(topic, config);
+}
+
 void publishIpAddressDiscovery()
 {
   String id = discoveryId();
@@ -1036,6 +1111,7 @@ void publishHomeAssistantDiscovery()
   publishSensorDiscovery();
   publishSpeedPercentDiscovery();
   publishPowerStateDiscovery();
+  publishFanDiscovery();
   publishIpAddressDiscovery();
   publishFirmwareVersionDiscovery();
   publishCalibrationButtonDiscovery();
@@ -1100,6 +1176,8 @@ void handleConfigPage()
   page += htmlEscape(String(mqttSpeedTargetStateTopic));
   page += F("<br>Power State Topic: ");
   page += htmlEscape(String(mqttPowerStateTopic));
+  page += F("<br>Power Set Topic: ");
+  page += htmlEscape(String(mqttPowerSetTopic));
   page += F("<br>IP Address Topic: ");
   page += htmlEscape(String(mqttIpAddressTopic));
   page += F("<br>Firmware Version Topic: ");
@@ -1257,25 +1335,46 @@ void callback(char *topic, byte *payload, unsigned int length)
     }
 
     int requestedSpeed = String(payload_str).toInt();
-    if (requestedSpeed < 1 || requestedSpeed > 99)
+    if (requestedSpeed < 0 || requestedSpeed > 99)
     {
       Serial.print(" ignored out-of-range target speed:");
       Serial.print(payload_str);
       return;
     }
 
-    targetSpeedPercent = requestedSpeed;
-    powerToggleAttempts = 0;
-    speedBurstRemaining = 0;
-    speedBurstDirection = 0;
-    lastSpeedAdjustAttempt = 0;
-    powerOnGraceUntil = 0;
-    powerOffWaitUntil = 0;
-    Serial.print(" target speed is:");
-    Serial.print(targetSpeedPercent);
-    if (client.connected())
+    if (requestedSpeed == 0)
     {
-      client.publish(mqttSpeedTargetStateTopic, String(targetSpeedPercent).c_str(), true);
+      requestFanPower(false);
+    }
+    else
+    {
+      setSpeedTarget(requestedSpeed);
+    }
+    return;
+  }
+
+  if (String(topic) == mqttPowerSetTopic)
+  {
+    if (calibrationState != CAL_IDLE)
+    {
+      publishCalibrationStatus(F("busy"));
+      return;
+    }
+
+    String command = String(payload_str);
+    command.toUpperCase();
+    if (command == "ON")
+    {
+      requestFanPower(true);
+    }
+    else if (command == "OFF")
+    {
+      requestFanPower(false);
+    }
+    else
+    {
+      Serial.print(" ignored unknown power command:");
+      Serial.print(payload_str);
     }
     return;
   }
@@ -1293,37 +1392,25 @@ void callback(char *topic, byte *payload, unsigned int length)
     // Luefter AN/AUS
     if (String(payload_str) == "power")
     {
-      targetSpeedPercent = -1;
-      powerToggleAttempts = 0;
-      speedBurstRemaining = 0;
-      speedBurstDirection = 0;
+      cancelSpeedTarget();
       sendPowerCommand();
     }
     // Luefterstufe plus
     if (String(payload_str) == "plus")
     {
-      targetSpeedPercent = -1;
-      powerToggleAttempts = 0;
-      speedBurstRemaining = 0;
-      speedBurstDirection = 0;
+      cancelSpeedTarget();
       sendPlusCommand();
     }
     // Luefterstufe minus
     if (String(payload_str) == "minus")
     {
-      targetSpeedPercent = -1;
-      powerToggleAttempts = 0;
-      speedBurstRemaining = 0;
-      speedBurstDirection = 0;
+      cancelSpeedTarget();
       sendMinusCommand();
     }
     // Lueftertimer
     if (String(payload_str) == "uhr")
     {
-      targetSpeedPercent = -1;
-      powerToggleAttempts = 0;
-      speedBurstRemaining = 0;
-      speedBurstDirection = 0;
+      cancelSpeedTarget();
       sendTimerCommand();
     }
   }
@@ -1356,6 +1443,7 @@ void reconnect()
       client.publish(mqttStatusTopic, "online", true);
       client.subscribe(mqttCommandTopic);
       client.subscribe(mqttSpeedSetTopic);
+      client.subscribe(mqttPowerSetTopic);
       client.subscribe(mqttCalibrationTopic);
       publishHomeAssistantDiscovery();
       publishRetained(mqttIpAddressTopic, WiFi.localIP().toString());
@@ -1381,7 +1469,7 @@ void setup()
   updateMqttTopics();
   setup_wifi();
   applyMqttConfig();
-  client.setBufferSize(768);
+  client.setBufferSize(1024);
   client.setCallback(callback);
 
   previousmills = 0;
